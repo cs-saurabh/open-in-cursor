@@ -17,6 +17,12 @@
       "title": "Open in cursor",
       "description": "",
       "mode": "view"
+    },
+    {
+      "name": "open-selected-in-cursor",
+      "title": "Open Selected In Cursor",
+      "description": "Open selected Finder items in Cursor",
+      "mode": "no-view"
     }
   ],
   "dependencies": {

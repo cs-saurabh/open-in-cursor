@@ -3,6 +3,10 @@ import { useEffect, useMemo } from "react";
 import fs from "fs";
 import path from "path";
 import { create } from "zustand";
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 interface Folder {
   name: string;
@@ -17,17 +21,19 @@ interface AppState {
   setRecentFolders: (folders: Folder[]) => void;
   setIsLoading: (isLoading: boolean) => void;
   addRecentFolder: (folder: Folder) => void;
+  clearRecentFolders: () => void;
 }
 
 const RECENT_FOLDERS_KEY = "recentFolders";
 const MAX_RECENT_FOLDERS = 10; // Updated from 5 to 10
 const HOME_DIR = process.env.HOME || "";
-const DOCUMENTS_DIR = path.join(HOME_DIR, "Documents");
+const WORK_DIR = path.join(HOME_DIR, "Work");
 
 const SEARCH_PATHS = [
-  path.join(DOCUMENTS_DIR, "Projects"),
-  path.join(DOCUMENTS_DIR, "raycast-extensions"),
-  path.join(DOCUMENTS_DIR, "test-code"),
+  path.join(WORK_DIR, "bmads"),
+  path.join(WORK_DIR, "pet-projects"),
+  path.join(WORK_DIR, "projects"),
+  path.join(WORK_DIR, "raycast-extensions"),
 ];
 
 const useStore = create<AppState>((set) => ({
@@ -46,10 +52,14 @@ const useStore = create<AppState>((set) => ({
       LocalStorage.setItem(RECENT_FOLDERS_KEY, JSON.stringify(updatedRecentFolders));
       return { recentFolders: updatedRecentFolders };
     }),
+  clearRecentFolders: () => {
+    LocalStorage.removeItem(RECENT_FOLDERS_KEY);
+    set({ recentFolders: [] });
+  },
 }));
 
 export default function Command() {
-  const { folders, recentFolders, isLoading, setFolders, setRecentFolders, setIsLoading, addRecentFolder } = useStore();
+  const { folders, recentFolders, isLoading, setFolders, setRecentFolders, setIsLoading, addRecentFolder, clearRecentFolders } = useStore();
 
   useEffect(() => {
     const loadFolders = async () => {
@@ -90,18 +100,49 @@ export default function Command() {
     loadFolders();
   }, []);
 
+  const findWorkspaceFileInFolder = (folderPath: string): string | null => {
+    try {
+      if (!fs.existsSync(folderPath)) {
+        return null;
+      }
+      const entries = fs.readdirSync(folderPath, { withFileTypes: true });
+      const workspaceFile = entries.find(
+        (entry) => entry.isFile() && entry.name.endsWith(".code-workspace")
+      );
+      return workspaceFile ? path.join(folderPath, workspaceFile.name) : null;
+    } catch (error) {
+      console.error(`Error checking for workspace file in ${folderPath}:`, error);
+      return null;
+    }
+  };
+
   const openInCursor = async (folder: Folder) => {
     try {
-      await open(folder.path, "Cursor");
-      await showToast(Toast.Style.Success, "Opened in Cursor", folder.path);
+      // Check if folder contains a .code-workspace file
+      const workspaceFile = findWorkspaceFileInFolder(folder.path);
+      
+      if (workspaceFile) {
+        // Open workspace file using cursor command
+        await execAsync(`cursor "${workspaceFile}"`);
+        await showToast(Toast.Style.Success, "Opened workspace in Cursor", workspaceFile);
+      } else {
+        // Open folder using cursor command
+        await execAsync(`cursor "${folder.path}"`);
+        await showToast(Toast.Style.Success, "Opened in Cursor", folder.path);
+      }
       addRecentFolder(folder);
     } catch (error) {
       await showToast(Toast.Style.Failure, "Failed to open in Cursor", String(error));
     }
   };
 
+  const handleClearRecentFolders = async () => {
+    clearRecentFolders();
+    await showToast(Toast.Style.Success, "Recent folders cleared");
+  };
+
   const getDisplayPath = (folderPath: string) => {
-    return `~/Documents/${path.relative(DOCUMENTS_DIR, folderPath)}`;
+    return `~/Work/${path.relative(WORK_DIR, folderPath)}`;
   };
 
   const renderFolderItem = (folder: Folder, isRecent: boolean) => (
@@ -134,6 +175,21 @@ export default function Command() {
       <List.Section title="All Folders" subtitle={`${otherFolders.length} folders`}>
         {otherFolders.map((folder) => renderFolderItem(folder, false))}
       </List.Section>
+
+      {recentFolders.length > 0 && (
+        <List.Section>
+          <List.Item
+            icon={Icon.Trash}
+            title="Clear Recent Folders"
+            subtitle="Remove all recent folders from history"
+            actions={
+              <ActionPanel>
+                <Action title="Clear Recent Folders" onAction={handleClearRecentFolders} />
+              </ActionPanel>
+            }
+          />
+        </List.Section>
+      )}
     </List>
   );
 }

@@ -3,12 +3,13 @@ import { useEffect, useMemo } from "react";
 import fs from "fs";
 import path from "path";
 import { create } from "zustand";
-import { exec } from "child_process";
-import { promisify } from "util";
-
-const execAsync = promisify(exec);
 
 interface Folder {
+  name: string;
+  path: string;
+}
+
+interface StaticCommand {
   name: string;
   path: string;
 }
@@ -28,6 +29,13 @@ const RECENT_FOLDERS_KEY = "recentFolders";
 const MAX_RECENT_FOLDERS = 10; // Updated from 5 to 10
 const HOME_DIR = process.env.HOME || "";
 const WORK_DIR = path.join(HOME_DIR, "Work");
+
+const STATIC_COMMANDS: StaticCommand[] = [
+  { name: "openzshrc", path: `${HOME_DIR}/.zshrc` },
+  { name: "openclaude", path: `${HOME_DIR}/.claude` },
+  { name: "opencursor", path: `${HOME_DIR}/.cursor` },
+  { name: "opencodex", path: `${HOME_DIR}/.codex` },
+];
 
 const SEARCH_PATHS = [
   path.join(WORK_DIR, "bmads"),
@@ -120,17 +128,21 @@ export default function Command() {
     try {
       // Check if folder contains a .code-workspace file
       const workspaceFile = findWorkspaceFileInFolder(folder.path);
-      
-      if (workspaceFile) {
-        // Open workspace file using cursor command
-        await execAsync(`cursor "${workspaceFile}"`);
-        await showToast(Toast.Style.Success, "Opened workspace in Cursor", workspaceFile);
-      } else {
-        // Open folder using cursor command
-        await execAsync(`cursor "${folder.path}"`);
-        await showToast(Toast.Style.Success, "Opened in Cursor", folder.path);
-      }
+      const pathToOpen = workspaceFile ?? folder.path;
+
+      // Use Raycast's open API - returns immediately, no waiting for Cursor to launch
+      await open(pathToOpen, "Cursor");
+      await showToast(Toast.Style.Success, workspaceFile ? "Opened workspace in Cursor" : "Opened in Cursor", pathToOpen);
       addRecentFolder(folder);
+    } catch (error) {
+      await showToast(Toast.Style.Failure, "Failed to open in Cursor", String(error));
+    }
+  };
+
+  const openStaticCommand = async (command: StaticCommand) => {
+    try {
+      await open(command.path, "Cursor");
+      await showToast(Toast.Style.Success, "Opened in Cursor", command.path);
     } catch (error) {
       await showToast(Toast.Style.Failure, "Failed to open in Cursor", String(error));
     }
@@ -161,6 +173,21 @@ export default function Command() {
     />
   );
 
+  const renderStaticCommand = (command: StaticCommand) => (
+    <List.Item
+      key={command.name}
+      icon={Icon.Terminal}
+      title={command.name}
+      subtitle={command.path}
+      actions={
+        <ActionPanel>
+          <Action title="Open in Cursor" onAction={() => openStaticCommand(command)} />
+          <Action.CopyToClipboard content={command.path} />
+        </ActionPanel>
+      }
+    />
+  );
+
   const otherFolders = useMemo(() => {
     const recentSet = new Set(recentFolders.map((f) => f.path));
     return folders.filter((f) => !recentSet.has(f.path));
@@ -168,11 +195,15 @@ export default function Command() {
 
   return (
     <List isLoading={isLoading} searchBarPlaceholder="Search folders...">
+      <List.Section title="Static Commands">
+        {STATIC_COMMANDS.map((command) => renderStaticCommand(command))}
+      </List.Section>
+
       <List.Section title="Recent Folders">
         {recentFolders.map((folder) => renderFolderItem(folder, true))}
       </List.Section>
 
-      <List.Section title="All Folders" subtitle={`${otherFolders.length} folders`}>
+      <List.Section title="Folders" subtitle={`${otherFolders.length} folders`}>
         {otherFolders.map((folder) => renderFolderItem(folder, false))}
       </List.Section>
 
